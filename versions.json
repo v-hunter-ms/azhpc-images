@@ -403,7 +403,7 @@
                     }
                 },
                 "driver": {
-                    "version": "13.2",
+                    "version": "13.0",
                     "distribution": "ubuntu2204"
                 },
                 "samples": {
