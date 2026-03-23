@@ -394,7 +394,7 @@
             "x86_64": {
                 "nvidia_v100": {
                     "driver": {
-                        "version": "12.9.1",
+                        "version": "12.9",
                         "distribution": "ubuntu2204"
                     },
                     "samples": {
