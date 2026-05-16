@@ -89,6 +89,7 @@ locals {
     local.vm_size == "Standard_ND40rs_v2" ? "V100" :
     local.vm_size == "Standard_ND96isr_MI300X_v5" ? "MI300X" :
     local.vm_size == "Standard_ND128isr_NDR_GB200_v6" ? "GB200" :
+    local.vm_size == "Standard_NC128lds_xl_RTXPRO6000BSE_v6" ? "NCv6" :
     "A100"
   )
   gpu_platform = (
@@ -429,8 +430,10 @@ locals {
     local.gpu_sku == "MI300X"
       ? ["westus", "francecentral", "eastus2euap", local.azure_location]
       : local.target_image_variant == "baremetal_image" && local.gpu_sku == "GB200"
-        ? ["southeastus5", local.azure_location]
-        : ["southcentralus", "northcentralus", "westcentralus", "westus", "westus2", "westus3", "eastus", "eastus2", "centralus", "centraluseuap", local.azure_location]
+        ? ["southeastus5", "northeastus5" ,local.azure_location]
+          : local.gpu_sku == "GB200"
+          ? ["centraluseuap", "eastus2euap" , "northeurope", "westeurope", local.azure_location]
+            : ["southcentralus", "northcentralus", "westcentralus", "westus", "westus2", "westus3", "eastus", "eastus2", "centralus", "centraluseuap", local.azure_location]
   )
   sig_replication_regions = (
     var.sig_replication_regions != null
@@ -467,7 +470,7 @@ locals {
 variable "azl_prebuilt_version" {
   type        = string
   description = "Version for Azure Linux prebuilt artifacts (e.g., 0.0.17)"
-  default     = env("AZL3GB200_PREBUILT_VERSION")
+  default     = env("AZL_PREBUILT_VERSION")
 }
 
 # =============================================================================
@@ -484,6 +487,12 @@ variable "gb200_partuuid" {
   type        = string
   description = "Disk PartUUID for GB200 builds (required for GB200 SKU). Set to 'None' for non-GB200 builds."
   default     = env("PARTUUID")
+}
+
+variable "azl3gb200_prebuilt_version" {
+  type        = string
+  description = "Version for AzureLinux 3.0 GB200 internal bits (e.g., 0.0.1)"
+  default     = env("AZL3GB200_PREBUILT_VERSION")
 }
 
 # =============================================================================
@@ -609,7 +618,12 @@ locals {
 
   # These values are reserved for 1P internal SIG
   internal_sig_image_definition_platform = local.gpu_platform == "AMD" ? "ROCm-" : ""
-  internal_sig_image_definition_sku = local.gpu_sku == "V100" ? "V100-" : (local.gpu_sku == "GB200" ? "GB200-" : "")
+  internal_sig_image_definition_sku = (
+    local.gpu_sku == "V100"  ? "V100-" :
+    local.gpu_sku == "GB200" ? "GB200-" :
+    local.gpu_sku == "NCv6"  ? "NCv6-" :
+    ""
+  )
   internal_sig_image_definition_details = {
     "Marketplace-Non-FIPS" = {
       "ubuntu" = {

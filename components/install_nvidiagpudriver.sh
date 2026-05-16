@@ -32,7 +32,7 @@ if [[ $DISTRIBUTION == "azurelinux3.0" ]]; then
     # or before switching to dnf
     # tdnf install -y --disablerepo=cuda-azl3* $AL3_GPU_DRIVER_PACKAGES
     tdnf install -y --disablerepo=cuda-azl3-x86_64 --disablerepo=cuda-azl3-sbsa $AL3_GPU_DRIVER_PACKAGES
-    NVIDIA_DRIVER_VERSION=$(sudo tdnf list installed | grep "^${AL3_GPU_DRIVER_PACKAGES}\." | sed 's/.*\s\+\([0-9.]\+-[0-9]\+\)_.*/\1/')
+    NVIDIA_DRIVER_VERSION=$(tdnf list installed | grep "^${AL3_GPU_DRIVER_PACKAGES}\." | sed 's/.*\s\+\([0-9.]\+-[0-9]\+\)_.*/\1/')
 
     # Temp disable NVIDIA driver updates
     mkdir -p /etc/tdnf/locks.d
@@ -106,13 +106,7 @@ if [[ "$DISTRIBUTION" != *-aks ]]; then
         # NVIDIA APT repo already configured during driver installation
         apt install -y cuda-toolkit-${CUDA_DRIVER_VERSION//./-}
     elif [[ $DISTRIBUTION == "azurelinux3.0" ]]; then    
-        # Install cuda-toolkit
-        # V100 does not support CUDA 13.0, so use CUDA 12.9.
-        if [ "$SKU" = "V100" ]; then
-            tdnf install -y cuda-toolkit-12-9-12.9.1
-        else
-            tdnf install -y cuda-toolkit-13-0-13.0.2
-        fi        
+        tdnf install -y cuda-toolkit-${CUDA_DRIVER_VERSION//./-}
     else
         # RHEL-family: AlmaLinux, Rocky Linux, RHEL, etc.
         dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DRIVER_DISTRIBUTION}/x86_64/cuda-${CUDA_DRIVER_DISTRIBUTION}.repo
@@ -120,39 +114,16 @@ if [[ "$DISTRIBUTION" != *-aks ]]; then
         dnf install -y cuda-toolkit-${CUDA_DRIVER_VERSION//./-}
     fi
 
-    echo 'export PATH=$PATH:/usr/local/cuda/bin' | sudo tee /etc/profile.d/cuda.sh > /dev/null
-    echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64' | sudo tee -a /etc/profile.d/cuda.sh > /dev/null
+    echo 'export PATH=$PATH:/usr/local/cuda/bin' | tee /etc/profile.d/cuda.sh > /dev/null
+    echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64' | tee -a /etc/profile.d/cuda.sh > /dev/null
 
     # Ensure proper permissions
-    sudo chmod 644 /etc/profile.d/cuda.sh
+    chmod 644 /etc/profile.d/cuda.sh
 
     cuda_version=$(source /etc/profile; nvcc --version | grep release | awk '{print $6}' | cut -c2-)
     write_component_version "CUDA" ${cuda_version}
 
-    # Download CUDA samples
-    TARBALL="v${CUDA_SAMPLES_VERSION}.tar.gz"
-    CUDA_SAMPLES_DOWNLOAD_URL=https://github.com/NVIDIA/cuda-samples/archive/refs/tags/${TARBALL}
-    download_and_verify ${CUDA_SAMPLES_DOWNLOAD_URL} ${CUDA_SAMPLES_SHA256}
-    tar -xvf ${TARBALL}
-    pushd ./cuda-samples-${CUDA_SAMPLES_VERSION}
-    mkdir build && cd build
-    
-    # DOCA's Ubuntu MPI packages can expose an invalid include path
-    # Force CMake to use the Open MPI built earlier in the image pipeline.
-    ompi_metadata=$(get_component_config "ompi")
-    OMPI_VERSION=$(jq -r '.version' <<< $ompi_metadata) 
-    OMPI_ROOT=/opt/openmpi-${OMPI_VERSION}
-    export PATH=${OMPI_ROOT}/bin:$PATH
-    export LD_LIBRARY_PATH=${OMPI_ROOT}/lib:$LD_LIBRARY_PATH
-
-    cmake -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-          -DMPI_HOME=${OMPI_ROOT} \
-          -DCMAKE_PREFIX_PATH=${OMPI_ROOT} \
-          -DMPI_C_COMPILER=/opt/openmpi-${OMPI_VERSION}/bin/mpicc \
-          -DMPI_CXX_COMPILER=/opt/openmpi-${OMPI_VERSION}/bin/mpicxx ..
-    make -j $(nproc)
-    mv -vT ./Samples /usr/local/cuda-${CUDA_DRIVER_VERSION}/samples # Use the same version as the CUDA toolkit as thats where samples is being moved to
-    popd
+    $COMPONENT_DIR/install_cuda_samples.sh
 
 fi
 
@@ -192,5 +163,5 @@ fi
 $COMPONENT_DIR/configure_nvidia_persistence.sh
 
 # cleanup downloaded files
-rm -rf *.run *tar.gz *.rpm
+rm -rf *.run *.tar.gz *.rpm
 rm -rf -- */

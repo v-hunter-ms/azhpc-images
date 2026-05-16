@@ -123,9 +123,9 @@ build {
     except         = (!var.skip_hpc && local.os_family == "azurelinux" && local.gpu_sku == "GB200") ? [] : ["azure-arm.hpc"]
     inline_shebang = var.default_inline_shebang
     inline         = [
-        "az storage blob download -f ./azlinux-hpc-image-prebuilt-aarch64-test-packages.tar.gz -c azurelinux-prebuilt -n azlinux-hpc-image-prebuilt-aarch64-test-packages_${var.azl_prebuilt_version}.tar.gz --account-name azhpcstoralt --auth-mode login",
+        "az storage blob download -f ./azlinux-hpc-image-prebuilt-aarch64-test-packages_${var.azl3gb200_prebuilt_version}.tar.gz -c azurelinux-prebuilt -n azlinux-hpc-image-prebuilt-aarch64-test-packages_${var.azl3gb200_prebuilt_version}.tar.gz --account-name azhpcstoralt --auth-mode login",
         "mkdir -p ${path.root}/../prebuilt",
-        "tar -xvf ./azlinux-hpc-image-prebuilt-aarch64-test-packages.tar.gz -C ${path.root}/../prebuilt --strip-components=1"
+        "tar -xvf ./azlinux-hpc-image-prebuilt-aarch64-test-packages_${var.azl3gb200_prebuilt_version}.tar.gz -C ${path.root}/.."
     ]
   }
 
@@ -284,7 +284,7 @@ build {
 
   provisioner "shell" {
     name            = "Run health checks"
-    except          = (!local.skip_validation && !var.skip_hpc && local.gpu_sku != "GB200") ? [] : ["azure-arm.hpc"]
+    except          = (!local.skip_validation && !var.skip_hpc && local.gpu_sku != "GB200" && local.gpu_sku != "NCv6") ? [] : ["azure-arm.hpc"]
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E bash '{{ .Path }}'"
     inline          = [
       "/opt/azurehpc/test/azurehpc-health-checks/run-health-checks.sh -o /opt/azurehpc/test/azurehpc-health-checks/health.log -v",

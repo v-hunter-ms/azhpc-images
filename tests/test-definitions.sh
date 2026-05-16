@@ -33,6 +33,24 @@ function ver {
     printf "10#%03d%03d%03d" $(echo "$1" | tr '.' ' '); 
 }
 
+# Private helper that matches NCv6 VM sizes.
+function _is_ncv6_sku {
+    local ncv6_sizes="standard_nc.*_rtxpro6000bse_v6"
+    [[ "${VMSIZE}" =~ ^($ncv6_sizes)$ ]]
+}
+
+function has_infiniband {
+    ! _is_ncv6_sku
+}
+
+function has_nvlink {
+    ! _is_ncv6_sku
+}
+
+function uses_ucx {
+    ! _is_ncv6_sku
+}
+
 # verify OFED installation
 function verify_ofed_installation {
     # verify OFED installation
@@ -46,13 +64,21 @@ function verify_ib_device_status {
     lspci | grep "Infiniband controller\|Network controller"
     check_exit_code "IB device is listed" "IB device not found"
 
-    # verify IB device is up
-    ibstatus | grep "LinkUp"
-    check_exit_code "IB device state: LinkUp" "IB link not up"
+    if [[ "${NODE_TYPE:-azure-vm}" == "baremetal" ]]; then
+        # Baremetal GB200/GB300: Verify IB devices are active and LinkUp
+        ibstatus | grep "LinkUp"
+        check_exit_code "IB devices are active and LinkUp" "IB Link is DOWN"
 
-    # verify ifconfig
-    ifconfig | grep "ib[[:digit:]]:\|ibP"
-    check_exit_code "IB device is configured" "IB device not configured"
+        ! ifconfig | grep "ib[[:digit:]]:\|ibP"
+        check_exit_code "IB Links are Down" "IB Links are Brought Up unexpectedly"
+    else
+        # Azure HPC VMs: IB device should be up and configured
+        ibstatus | grep "LinkUp"
+        check_exit_code "IB device state: LinkUp" "IB link not up"
+
+        ifconfig | grep "ib[[:digit:]]:\|ibP"
+        check_exit_code "IB device is configured" "IB device not configured"
+    fi
 
     #verify hostname -i returns IP address only
     hostname -i | grep -E "^([[:digit:]]{1,3}[\.]){3}[[:digit:]]{1,3}$"
@@ -64,16 +90,22 @@ function verify_hpcx_installation {
     module avail
 
     check_exists "${MODULE_FILES_ROOT}/mpi/hpcx"
+
+    # UCX SKUs: use UCX RC transport. Non-UCX SKUs: no args needed (built with libfabric, auto-selects OFI).
+    local mpi_args=""
+    if uses_ucx; then
+        mpi_args="-x UCX_TLS=rc"
+    fi
     
     module load mpi/hpcx
-    mpirun -np 2 --map-by ppr:2:node -x UCX_TLS=rc ${HPCX_OSU_DIR}/osu_latency
+    mpirun -np 2 --map-by ppr:2:node ${mpi_args} ${HPCX_OSU_DIR}/osu_latency
     check_exit_code "HPC-X" "Failed to run HPC-X"
     module unload mpi/hpcx
 
     check_exists "${MODULE_FILES_ROOT}/mpi/hpcx-pmix"
 
     module load mpi/hpcx-pmix
-    mpirun -np 2 --map-by ppr:2:node -x UCX_TLS=rc ${HPCX_OSU_DIR}/osu_latency
+    mpirun -np 2 --map-by ppr:2:node ${mpi_args} ${HPCX_OSU_DIR}/osu_latency
     check_exit_code "HPC-X with PMIx" "Failed to run HPC-X with PMIx"
     module unload mpi/hpcx-pmix
     module purge
@@ -83,18 +115,27 @@ function verify_mvapich2_installation {
     check_exists "${MODULE_FILES_ROOT}/mpi/mvapich"
 
     module load mpi/mvapich
-    # Env MV2_FORCE_HCA_TYPE=22 explicitly selects EDR
     local mvapich_omb_path=${MPI_HOME}/libexec/osu-micro-benchmarks/mpi/pt2pt
-    mpiexec -np 2 -ppn 2 -env MV2_USE_SHARED_MEM=0  -env MV2_FORCE_HCA_TYPE=22 ${mvapich_omb_path}/osu_latency
+    if uses_ucx; then
+        # UCX transport: MV2_FORCE_HCA_TYPE=22 explicitly selects EDR
+        mpiexec -np 2 -ppn 2 -env MV2_USE_SHARED_MEM=0 -env MV2_FORCE_HCA_TYPE=22 ${mvapich_omb_path}/osu_latency
+    else
+        # OFI transport: disable CMA (process_vm_readv fails with ptrace_scope=1 on sibling processes)
+        mpiexec -np 2 -ppn 2 -env MPIR_CVAR_CH4_CMA_ENABLE=0 ${mvapich_omb_path}/osu_latency
+    fi
     check_exit_code "MVAPICH ${VERSION_MVAPICH}" "Failed to run MVAPICH"
     module unload mpi/mvapich
 }
 
 function verify_impi_2021_installation {
     check_exists "${MODULE_FILES_ROOT}/mpi/impi-2021"
+
+    # Use TCP on non-IB SKUs and Mellanox (mlx) on IB SKUs
+    local fi_provider="mlx"
+    if ! has_infiniband; then fi_provider="tcp"; fi
     
     module load mpi/impi-2021
-    mpiexec -np 2 -ppn 2 -env FI_PROVIDER=mlx -env I_MPI_SHM=0 ${MPI_BIN}/IMB-MPI1 pingpong
+    mpiexec -np 2 -ppn 2 -env FI_PROVIDER=${fi_provider} -env I_MPI_SHM=0 ${MPI_BIN}/IMB-MPI1 pingpong
     check_exit_code "Intel MPI 2021 ${VERSION_IMPI}" "Failed to run Intel MPI 2021"
     module unload mpi/impi-2021
 }
@@ -110,11 +151,13 @@ function verify_nvidia_driver_installation {
     nvidia_driver_cuda_version=$(nvidia-smi --version | tail -n 1 | awk -F':' '{print $2}' | tr -d "[:space:]")
     check_exit_code "NVIDIA Driver ${VERSION_NVIDIA}" "Failed to run NVIDIA SMI"
     
-    # Verify if NVIDIA peer memory module is inserted
-    lsmod | grep nvidia_peermem
-    check_exit_code "NVIDIA Peer memory module is inserted" "NVIDIA Peer memory module is not inserted!"
+    # Verify if NVIDIA peer memory module is inserted on SKUs with IB
+    if has_infiniband; then
+        lsmod | grep nvidia_peermem
+        check_exit_code "NVIDIA Peer memory module is inserted" "NVIDIA Peer memory module is not inserted!"
+    fi
 
-    if [[ "$VMSIZE" == "standard_nd128isr_ndr_gb200_v6" || "$VMSIZE" == "standard_nd128isr_gb300_v6" ]]; then
+    if [[ "${SKU_FAMILY:-}" == "gb-family" ]]; then
         # Verify if NVIDIA driver CDMM mode is enabled
         cat /proc/driver/nvidia/params | grep -q  "CoherentGPUMemoryMode: \"driver\""
         check_exit_code "NVIDIA CDMM mode is enabled" "NVIDIA CDMM mode is not enabled!"
@@ -151,6 +194,11 @@ function verify_nccl_installation {
 
     module load mpi/hpcx
 
+    # Determine if this is a gb-family node by SKU_FAMILY (forward-compatible)
+    # or by VMSIZE pattern (backward-compatible for existing Azure SKUs).
+    local _is_gb_family=0
+    [[ "${SKU_FAMILY:-}" == "gb-family" ]] && _is_gb_family=1
+
     case ${VMSIZE} in
         standard_nc24rs_v3) mpirun -np 4 \
             -x LD_LIBRARY_PATH \
@@ -184,7 +232,12 @@ function verify_nccl_installation {
                 -x NCCL_DEBUG=WARN \
                 -x NCCL_NET_GDR_LEVEL=5 \
                 /opt/nccl-tests/build/all_reduce_perf -b1K -f2 -g1 -e 4G;;
-        standard_nd128isr_ndr_gb200_v6|standard_nd128isr_gb300_v6) mpirun -np 4 \
+        standard_nd128isr_ndr_gb200_v6|standard_nd128isr_gb300_v6) _is_gb_family=1;;
+        *) ;;
+    esac
+
+    if [[ "$_is_gb_family" == "1" ]]; then
+        mpirun -np 4 \
             --allow-run-as-root \
             --map-by ppr:4:node \
             -x LD_LIBRARY_PATH=/usr/local/nccl-rdma-sharp-plugins/lib:$LD_LIBRARY_PATH \
@@ -195,7 +248,21 @@ function verify_nccl_installation {
             -x NCCL_SOCKET_IFNAME=eth0 \
             -x NCCL_DEBUG=WARN \
             -x NCCL_NET_GDR_LEVEL=5 \
-            /opt/nccl-tests/build/all_reduce_perf -b1K -f2 -g1 -e 4G;;                
+            /opt/nccl-tests/build/all_reduce_perf -b1K -f2 -g1 -e 4G
+    fi
+
+    case ${VMSIZE} in
+        standard_nc*_rtxpro6000bse_v6)
+            local ncv6_gpu_count
+            ncv6_gpu_count=$(nvidia-smi -L | grep -c "^GPU")
+            mpirun -np ${ncv6_gpu_count} \
+            --allow-run-as-root \
+            --map-by ppr:${ncv6_gpu_count}:node \
+            -x LD_LIBRARY_PATH \
+            -x CUDA_DEVICE_ORDER=PCI_BUS_ID \
+            -x NCCL_SOCKET_IFNAME=eth0 \
+            -x NCCL_DEBUG=WARN \
+            /opt/nccl-tests/build/all_reduce_perf -b1K -f2 -g1 -e 4G;;
         *) ;;
     esac
     check_exit_code "NCCL ${VERSION_NCCL}" "Failed to run NCCL all reduce perf"
@@ -242,8 +309,7 @@ function verify_rccl_installation {
 function verify_package_updates {
     case ${ID} in
         ubuntu)
-            if [[ "$VMSIZE" == "standard_nd128isr_ndr_gb200_v6" || "$VMSIZE" == "standard_nd128isr_gb300_v6" ]]; then
-                # doca-related packages are not latest version which includes stale packages, so just list packages here for reference
+            if [[ "${SKU_FAMILY:-}" == "gb-family" ]]; then
                 sudo apt -s upgrade 2> /dev/null
                 # num_upgradable=$(sudo apt -s upgrade 2>/dev/null | grep -oP '^\K[0-9]+(?= upgraded,)')
                 # [[ "$num_upgradable" -eq 0 ]];;
@@ -264,15 +330,7 @@ function verify_package_updates {
         azurelinux) true;;
         *)
             sudo dnf -y makecache 
-            sudo dnf check-update -y --refresh
-            local exit_code=$?
-            if [[ $exit_code -eq 0 ]] || [[ $exit_code -eq 100 ]]; then
-                # Exit code 100 means updates are available — not an error
-                true
-            else
-                (exit $exit_code)
-            fi
-            ;;
+            sudo dnf check-update -y --refresh;;
     esac
     check_exit_code "No stale packages" "Stale packages found!"
 }
@@ -327,16 +385,28 @@ function verify_ib_modules_and_devices {
         echo "[OK] : openibd service is active"
     fi
 
-    # Check if all key IB modules are inserted
-    local ib_modules=("ib_uverbs" "ib_umad" "ib_ipoib" "ib_cm" "ib_core")
+    # Check if all key IB modules are inserted.
+    # ib_ipoib is not loaded on baremetal nodes (IPoIB is not used).
+    local ib_modules
+    if [[ "${NODE_TYPE:-azure-vm}" == "baremetal" ]]; then
+        ib_modules=("ib_uverbs" "ib_umad" "ib_cm" "ib_core")
+    else
+        ib_modules=("ib_uverbs" "ib_umad" "ib_ipoib" "ib_cm" "ib_core")
+    fi
     for module in "${ib_modules[@]}"; do
         lsmod | grep "^${module}"
         check_exit_code "${module} module is inserted" "${module} module not inserted!"
     done
 
     # Check if ib devices are listed
-    ip addr | grep ib
-    check_exit_code "IPoIB is working" "IPoIB is not working!"
+    if [[ "${NODE_TYPE:-azure-vm}" == "baremetal" ]]; then
+        # On baremetal GB200/GB300, IPoIB is not used
+        ! (ip addr | grep ib)
+        check_exit_code "IPoIB not present as expected" "IPoIB unexpectedly present!"
+    else
+        ip addr | grep ib
+        check_exit_code "IPoIB is working" "IPoIB is not working!"
+    fi
 }
 
 # only best-effort install since Lustre isn't always available
@@ -361,7 +431,7 @@ function verify_pssh_installation {
     case ${ID} in
         ubuntu) dpkg -l | grep pssh;;
         almalinux|rocky|rhel) dnf list installed | grep pssh;;
-        azurelinux) tdnf list installed | grep pssh;;
+        azurelinux) sudo tdnf list installed | grep pssh;;
         * ) ;;
     esac
     check_exit_code "PSSH Installed" "PSSH not installed!"
@@ -377,7 +447,7 @@ function verify_dcgm_installation {
     case ${ID} in
         ubuntu) dpkg -l | grep datacenter-gpu-manager;;
         almalinux|rocky|rhel) dnf list installed | grep datacenter-gpu-manager;;
-        azurelinux) tdnf list installed | grep datacenter-gpu-manager;;
+        azurelinux) sudo tdnf list installed | grep datacenter-gpu-manager;;
         * ) ;;
     esac
     check_exit_code "DCGM Installed" "DCGM not installed!"
@@ -389,7 +459,7 @@ function verify_dcgm_installation {
 
 function verify_sku_customization_service {
     # Check if the SKU customization service is active
-    local valid_sizes="standard_nc.*ads_a100_v4|standard_nd96.*v4|standard_nd40rs_v2|standard_hb176.*v4|standard_nd96is*_h100_v5"
+    local valid_sizes="standard_nc.*ads_a100_v4|standard_nd96.*v4|standard_nd40rs_v2|standard_hb176.*v4|standard_nd96is*_h100_v5|standard_nc.*_rtxpro6000bse_v6"
     if [[ "${VMSIZE}" =~ ^($valid_sizes)$ ]]
     then
         systemctl is-active --quiet sku-customizations
@@ -435,21 +505,67 @@ function verify_nvloom_setup {
 }
 
 function verify_nvlink_setup {
+    # Skip NVLink checks on SKUs without NVLink
+    if ! has_nvlink; then return; fi
+
     # Verify nvlink setup
     nvidia-smi nvlink --status
     check_exit_code "NVLINK Reports Healthy" "Unhealthy NVLINK setup!"
 
-    if [[ "$VMSIZE" == "standard_nd128isr_ndr_gb200_v6" || "$VMSIZE" == "standard_nd128isr_gb300_v6" ]]; then
+    if [[ "${SKU_FAMILY:-}" == "gb-family" ]]; then
         nvidia_smi_output=$(nvidia-smi -q | grep 'Fabric' -A 4)
         echo "$nvidia_smi_output"
-        echo "$nvidia_smi_output" | grep -q 'N/A'
-        if [ $? -eq 0 ]; then
-            echo "*** Error - Unhealthy NVLINK setup!!"
+
+        # Validate each GPU's Fabric block: State=Completed, Status=Success,
+        # non-zero CliqueId, and valid (non-zero) ClusterUUID.
+        # Previously only checked for literal "N/A", which missed failure modes
+        # like "Status : Insufficient Resources" with CliqueId 0.
+        if [[ -z "$nvidia_smi_output" ]]; then
+            echo "*** Error - Failed to retrieve Fabric information or no Fabric data found"
+            exit -1
+        fi
+
+        local fabric_errors=0
+        local gpu_idx=0
+
+        while IFS= read -r -d '' block; do
+            local state status clique_id cluster_uuid
+            state=$(echo "$block" | grep 'State' | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
+            status=$(echo "$block" | grep 'Status' | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
+            clique_id=$(echo "$block" | grep 'CliqueId' | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
+            cluster_uuid=$(echo "$block" | grep 'ClusterUUID' | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
+
+            if [[ "$state" != "Completed" ]]; then
+                echo "*** Error - GPU $gpu_idx: Fabric State='$state' (expected 'Completed')"
+                ((fabric_errors++)) || true
+            fi
+            if [[ "$status" != "Success" ]]; then
+                echo "*** Error - GPU $gpu_idx: Fabric Status='$status' (expected 'Success')"
+                ((fabric_errors++)) || true
+            fi
+            if [[ "$clique_id" == "0" ]] || [[ -z "$clique_id" ]]; then
+                echo "*** Error - GPU $gpu_idx: Fabric CliqueId='$clique_id' (expected non-zero)"
+                ((fabric_errors++)) || true
+            fi
+            if [[ -z "$cluster_uuid" ]] || [[ "$cluster_uuid" == "00000000-0000-0000-0000-000000000000" ]]; then
+                echo "*** Error - GPU $gpu_idx: Fabric ClusterUUID='$cluster_uuid' (expected valid non-zero UUID)"
+                ((fabric_errors++)) || true
+            fi
+            ((gpu_idx++)) || true
+        done < <(echo "$nvidia_smi_output" | awk '/^[[:space:]]*Fabric[[:space:]]*$/{found=1; block=""; next} found{block=block $0 "\n"; if(/ClusterUUID/){printf "%s\0", block; found=0; block=""}}')
+
+        if [[ "$gpu_idx" -eq 0 ]]; then
+            echo "*** Error - No Fabric blocks parsed from nvidia-smi output"
+            exit -1
+        fi
+
+        if [[ "$fabric_errors" -gt 0 ]]; then
+            echo "*** Error - Unhealthy NVLINK Fabric setup!! ($fabric_errors issues found)"
             exit -1
         else
-            echo "[OK] : NVLINK setup is healthy"
+            echo "[OK] : NVLINK Fabric setup is healthy (all GPUs: State=Completed, Status=Success)"
         fi
-    fi    
+    fi
 }
 
 function verify_nvidia_imex_service {

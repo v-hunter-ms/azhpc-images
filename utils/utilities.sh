@@ -4,19 +4,40 @@
 # @Args        : (1) #Component name
 # @RetVal       : json node value
 # Lookup hierarchy:
-#   1. component.distribution.architecture.<GPU_SKU> (if GPU and SKU are set, e.g., nvidia_v100)
-#   2. component.distribution.architecture
-#   3. component.common
+#   1. component.distribution.architecture.<GPU_SKU>.<NODE_TYPE> (e.g., nvidia_gb200.baremetal)
+#   2. component.distribution.architecture.<GPU_SKU>.default
+#   3. component.distribution.architecture.<GPU_SKU> (legacy direct config, e.g., nvidia_v100)
+#   4. component.distribution.architecture
+#   5. component.common
 ############################################################################
+normalize_component_config_key(){
+    echo "$1" | awk '{ value=tolower($0); gsub(/[^a-z0-9]+/, "_", value); print value }'
+}
+
 get_component_config(){
     component=$1
-  
-    # If GPU and SKU are set, try GPU_SKU-specific configuration first (e.g., nvidia_v100)
-    if [[ -n "$GPU" && -n "$SKU" ]]; then
-        sku_key=$(echo "${GPU}_${SKU}" | awk '{print tolower($0)}')
-        config=$(jq -r '."'"${component}"'"."'"${DISTRIBUTION}"'"."'"${ARCHITECTURE}"'"."'"${sku_key}"'"' <<< "${COMPONENT_VERSIONS}")
-    else
-        config="null"
+
+    config="null"
+
+    if [[ -n "${GPU:-}" && -n "${SKU:-}" ]]; then
+        sku_key=$(normalize_component_config_key "${GPU}_${SKU}")
+        node_type_key=$(normalize_component_config_key "${NODE_TYPE:-azure-vm}")
+
+        config=$(jq -r '."'"${component}"'"."'"${DISTRIBUTION}"'"."'"${ARCHITECTURE}"'"."'"${sku_key}"'"."'"${node_type_key}"'"' <<< "${COMPONENT_VERSIONS}")
+
+        if [[ "$config" = "null" ]]; then
+            config=$(jq -r '."'"${component}"'"."'"${DISTRIBUTION}"'"."'"${ARCHITECTURE}"'"."'"${sku_key}"'".default' <<< "${COMPONENT_VERSIONS}")
+        fi
+
+        if [[ "$config" = "null" ]]; then
+            sku_config=$(jq -r '."'"${component}"'"."'"${DISTRIBUTION}"'"."'"${ARCHITECTURE}"'"."'"${sku_key}"'"' <<< "${COMPONENT_VERSIONS}")
+            if [[ "$sku_config" != "null" ]]; then
+                has_nested_config=$(jq -r 'type == "object" and (has("default") or has("baremetal") or has("azure_vm"))' <<< "$sku_config")
+                if [[ "$has_nested_config" != "true" ]]; then
+                    config="$sku_config"
+                fi
+            fi
+        fi
     fi
     
     # If no SKU-specific config found, try architecture level
@@ -93,4 +114,23 @@ verify_checksum() {
         echo "*** Error - Checksum verification failed"
         return 1
     fi
+}
+
+# Private helper that matches NCv6.
+function _is_ncv6_sku {
+    case "$SKU" in
+        NCv6) return 0 ;;
+        *)    return 1 ;;
+    esac
+}
+
+# Whether the current SKU has InfiniBand hardware.
+# Used to skip DOCA-OFED, nccl-rdma-sharp-plugins, and other IB-only components.
+function sku_has_infiniband {
+    ! _is_ncv6_sku
+}
+
+# Whether this SKU uses UCX as its MPI transport layer.
+function sku_uses_ucx {
+    ! _is_ncv6_sku
 }
