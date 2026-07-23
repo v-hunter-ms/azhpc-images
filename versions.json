@@ -33,9 +33,9 @@
     "doca": {
         "ubuntu22.04": {
             "x86_64": {
-                "version": "3.2.2",
-                "sha256": "9ef5dfc906c0a692b8c52d2f62c27badc7a0870c0993a2f5a429eea3371622fd",
-                "url": "https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.2/host/doca-host_3.2.2-035000-25.10-ubuntu2204_amd64.deb"
+                "version": "3.2.3",
+                "sha256": "f450b5eba37bfba96fcdd35c39bf1c17b88918bd4bc47e8d8bb2ecae18a2f24b",
+                "url": "https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.3/host/doca-host_3.2.3-019000-25.10-ubuntu2204_amd64.deb"
             }
         },
         "ubuntu24.04": {
@@ -359,7 +359,7 @@
         "ubuntu22.04": {
             "x86_64": {
                 "driver": {
-                    "version": "580.159.04"
+                    "version": "580.173.02"
                 }
             }
         },
@@ -839,7 +839,7 @@
     "dcgm": {
         "ubuntu22.04": {
             "x86_64": {
-                "version": "1:4.5.2-1"
+                "version": "1:4.6.0-1"
             }
         },
         "ubuntu24.04": {
