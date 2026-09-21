@@ -7,6 +7,12 @@ source ${UTILS_DIR}/utilities.sh
 lustre_metadata=$(get_component_config "lustre")
 LUSTRE_VERSION=$(jq -r '.version' <<< $lustre_metadata)
 
+CURRENT_KERNEL_VERSION=${KERNEL_VERSION:-$(uname -r)}
+if [[ "${CURRENT_KERNEL_VERSION}" == "7.0" || "${CURRENT_KERNEL_VERSION}" == 7.0.* || "${CURRENT_KERNEL_VERSION}" == 7.0-* ]]; then
+    echo "Skipping Lustre client installation for kernel version ${CURRENT_KERNEL_VERSION}"
+    exit 0
+fi
+
 configure_lustre_dkms_no_o2ib() {
     local config_file=$1
 
@@ -48,27 +54,6 @@ configure_lustre_dkms_skip_artifact() {
     cat >> "${dkms_conf}" <<EOF
 # ${description}
 BUILD_EXCLUSIVE_KERNEL[${slot}]="^$"
-EOF
-}
-
-configure_lustre_dkms_lu20071_patch() {
-    local module=lustre-client
-    local module_version=$1
-    local kernel_header=/lib/modules/$(uname -r)/build/include/linux/timer.h
-    local dkms_conf=/etc/dkms/${module}-${module_version}.conf
-    local patch_file=${COMPONENT_DIR}/patches/lustre-client-lu-20071-timer-container-of.patch
-    local patch_dir=/etc/dkms/${module}/patches
-
-    # RHEL 9.8 kernels 5.14.0-687+ dropped from_timer(); LU-20071 rewires
-    # Lustre's cfs_from_timer wrapper to timer_container_of.
-    [[ -f "${kernel_header}" ]] || return 0
-    grep -q 'from_timer' "${kernel_header}" && return 0
-
-    mkdir -p "${patch_dir}"
-    cp "${patch_file}" "${patch_dir}/lu-20071-timer-container-of.patch"
-    mkdir -p "$(dirname "${dkms_conf}")"
-    cat >> "${dkms_conf}" <<'EOF'
-PATCH[0]="lu-20071-timer-container-of.patch"
 EOF
 }
 
@@ -148,7 +133,6 @@ else
     configure_lustre_dkms_no_o2ib /etc/sysconfig/lustre
     configure_lustre_dkms_skip_artifact lustre-client "${LUSTRE_VERSION_UNDERSCORE}" 3 \
         "EL ko2iblnd is record 3; --with-o2ib=no intentionally skips it."
-    configure_lustre_dkms_lu20071_patch "${LUSTRE_VERSION_UNDERSCORE}"
     dnf install -y --disableexcludes=main --refresh "${LUSTRE_PACKAGES[@]}"
     check_dkms_status lustre-client
     LUSTRE_VERSION=${LUSTRE_VERSION_UNDERSCORE}

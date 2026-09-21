@@ -32,6 +32,11 @@ if [ "$GPU" = "AMD" ]; then
     $COMPONENT_DIR/install_rocm.sh
 fi
 
+if [ "$GPU" = "NVIDIA" ]; then
+    # Install CUDA before MPI so HPC-X can rebuild Open MPI with CUDA support.
+    $COMPONENT_DIR/install_nvidiagpudriver.sh
+fi
+
 # install PMIX
 $COMPONENT_DIR/install_pmix.sh
 
@@ -39,9 +44,6 @@ $COMPONENT_DIR/install_pmix.sh
 $COMPONENT_DIR/install_mpis.sh
 
 if [ "$GPU" = "NVIDIA" ]; then
-    # install nvidia gpu driver
-    $COMPONENT_DIR/install_nvidiagpudriver.sh
-    
     # Install NCCL
     $COMPONENT_DIR/install_nccl.sh
     
@@ -114,6 +116,8 @@ $COMPONENT_DIR/install_health_checks.sh "$GPU"
 
 # write kernel and OS version metadata
 $COMPONENT_DIR/write_kernel_os_version.sh
+
+$COMPONENT_DIR/install_azsecpack_prereqs.sh
 
 # disable cloud-init
 $COMPONENT_DIR/disable_cloudinit.sh
