@@ -109,9 +109,6 @@ if [ "$ARCHITECTURE" == "x86_64" ]; then
     $COMPONENT_DIR/install_intel_libs.sh
 fi
 
-# install dynolog and dyno-relay-logger
-$COMPONENT_DIR/install_dynolog_drl.sh
-
 # cleanup downloaded tarballs - clear some space
 rm -rf *.tgz *.bz2 *.tbz *.tar.gz *.run *.deb *_offline.sh
 rm -rf /tmp/MLNX_OFED_LINUX* /tmp/*conf*
@@ -167,9 +164,6 @@ $COMPONENT_DIR/setup_sku_customizations.sh
 
 # scan vulnerabilities using Trivy
 $COMPONENT_DIR/trivy_scan.sh
-
-# diable auto kernel updates
-./disable_auto_upgrade.sh
 
 # Disable Predictive Network interface renaming
 ./disable_predictive_interface_renaming.sh

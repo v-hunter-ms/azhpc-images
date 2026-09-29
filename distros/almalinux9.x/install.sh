@@ -25,6 +25,9 @@ source ../../utils/set_properties.sh
 
 ./install_utils.sh
 
+# Fix legacy SETools version lookup for CycleCloud compatibility
+$COMPONENT_DIR/fix_setools_cyclecloud.sh
+
 # install DOCA OFED
 $COMPONENT_DIR/install_doca.sh
 
@@ -58,9 +61,6 @@ $COMPONENT_DIR/install_amd_libs.sh
 
 # install Intel libraries
 $COMPONENT_DIR/install_intel_libs.sh
-
-# install dynolog and dyno-relay-logger
-$COMPONENT_DIR/install_dynolog_drl.sh
 
 # cleanup downloaded tarballs - clear some space
 rm -rf *.tgz *.bz2 *.tbz *.tar.gz *.run *.deb *_offline.sh
