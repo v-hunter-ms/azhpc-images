@@ -385,9 +385,9 @@
     },
     "impi": {
         "common": {
-            "version": "2021.18.1",
-            "sha256": "b1c6a701a618c6e1ff370a3e21b356f975ca97bfa9bfb8a486df09a78351af41",
-            "url": "https://registrationcenter-download.intel.com/akdlm/IRC_NAS/6fcf9602-c77b-4240-b48f-b867409578c7/intel-mpi-2021.18.1.10_offline.sh"
+            "version": "2021.16.1",
+            "sha256": "4165717608e90ae6123397ebf2a9b87a0b070842ce7d13378d1446a08966eb6e",
+            "url": "https://registrationcenter-download.intel.com/akdlm/IRC_NAS/203edae7-5269-4124-a1ed-09ad924f8b47/intel-mpi-2021.16.1.804_offline.sh"
         }
     },
     "nvidia": {
