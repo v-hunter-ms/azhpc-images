@@ -137,7 +137,13 @@ function sku_has_nvswitch {
 # verify OFED installation
 function verify_ofed_installation {
     # verify OFED installation
-    ofed_info | grep ${VERSION_OFED}
+    if command -v ofed_info >/dev/null 2>&1; then
+        ofed_info | grep ${VERSION_OFED}
+    else
+        # DOCA >= 3.6 no longer ships ofed_info.
+        { rpm -q --qf '%{VERSION}-%{RELEASE}\n' mlnx-ofa_kernel 2>/dev/null ||
+          dpkg-query -W -f='${Version}\n' mlnx-ofed-kernel-utils 2>/dev/null; } | grep -F "${VERSION_OFED}"
+    fi
     check_exit_code "OFED installed" "OFED not installed"
 }
 
@@ -471,18 +477,22 @@ function verify_systemd_unit_syntax {
         # components that are unavailable while the image is being built.
         # Exclude only the standard cloud-init unit family; continue to verify
         # all other generated and extended units.
-        if [[ "${ID}" == "azurelinux" ]]; then
-            local filtered_units=()
-            local unit unit_name
-            for unit in "${units[@]}"; do
-                unit_name=${unit##*/}
+        # MDE is build-time only (purged by clear_history.sh) and its binaries are root-only.
+        local filtered_units=()
+        local unit unit_name
+        for unit in "${units[@]}"; do
+            unit_name=${unit##*/}
+            case "${unit_name}" in
+                mdatp*.service|mde_netfilter*.service|mde_netfilter*.socket) continue ;;
+            esac
+            if [[ "${ID}" == "azurelinux" ]]; then
                 case "${unit_name}" in
                     cloud-config.service|cloud-final.service|cloud-init*.service|cloud-init*.socket) continue ;;
-                    *) filtered_units+=("${unit}") ;;
                 esac
-            done
-            units=("${filtered_units[@]}")
-        fi
+            fi
+            filtered_units+=("${unit}")
+        done
+        units=("${filtered_units[@]}")
 
         if (( ${#units[@]} > 0 )); then
             run_command_and_check_exit_code "systemd generated unit syntax" \
@@ -619,9 +629,17 @@ function verify_mkl_installation {
     check_exit_code "Intel Oneapi MKL ${VERSION_INTEL_ONE_MKL}" "Intel Oneapi MKL installation not found!"
 }
 
-function verify_hpcdiag_installation {
-    local hpcdiag_path="${HPC_ENV}/diagnostics/gather_azhpc_vm_diagnostics.sh"
-    check_exists $hpcdiag_path
+function verify_diagnostics_installation {
+    local diag_dir="${HPC_ENV}/diagnostics" python
+    check_exists "${diag_dir}/azhpc-diagnostics.sh"
+    check_exists "${diag_dir}/azhpc-collect-lib.sh"
+    check_exists "${diag_dir}/azhpc-diagnostics-facts.py"
+    check_exists "${diag_dir}/azhpc-diagnostics-analyze.py"
+    check_exists /usr/sbin/dmidecode
+    # Structuring and analysis need Python 3 (platform-python on EL8 images without python3)
+    python=$(command -v python3 || echo /usr/libexec/platform-python)
+    [[ "$("${python}" "${diag_dir}/azhpc-diagnostics-facts.py" sku-hardware --field gpu_vendor Standard_ND96asr_v4)" == nvidia ]]
+    check_exit_code "azhpc-diagnostics Python scripts run with ${python}" "azhpc-diagnostics Python scripts don't run with ${python}"
 }
 
 # Internal/ external installation of GCC
