@@ -989,9 +989,11 @@
         },
         "ubuntu22.04": {
             "x86_64": {
-                "version": "2.30.3-1",
+                "version": "2.30.4-1",
+                "sha256": "fe12cb244a4aea4c802d0a18d1072e10f102fc39c2530a8251c2abdaeea9ecba",
                 "rdmasharpplugins": {
-                    "commit": "master"
+                    "branch": "master",
+                    "commit": "7daa9c64a2c496804c1d7a9284ca55b699716036"
                 }
             }
         }
