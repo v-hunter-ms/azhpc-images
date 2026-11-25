@@ -1,0 +1,12 @@
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/xsk/tx.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/xsk/tx.c
+@@ -121,7 +121,7 @@
+ #endif
+        xdptxd.len = desc.len;
+
+ #ifdef HAVE_XSK_TX_METADATA_OPS
+-		meta = xsk_buff_get_metadata(pool, desc.addr);
++		meta = xsk_buff_get_metadata(pool, desc.addr, desc.options);
+ #endif
+
+ #ifdef HAVE_XSK_BUFF_ALLOC
